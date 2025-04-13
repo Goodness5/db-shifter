@@ -45,7 +45,7 @@ pip install db-shifter
 Or if you're a real one:
 
 ```bash
-git clone https://github.com/your-mad-ass/db-shifter.git
+git clone https://github.com/goodness5/db-shifter.git
 cd db-shifter
 pip install -e .
 ```
@@ -55,9 +55,7 @@ pip install -e .
 ## 🚀 Usage
 
 ```bash
-db-shifter \
-  --old-db-url postgresql://user:pass@oldhost/db \
-  --new-db-url postgresql://user:pass@newhost/db
+db-shifter --old-db-url postgresql://user:pass@oldhost/db   --new-db-url postgresql://user:pass@newhost/db
 ```
 
 ---
@@ -68,7 +66,7 @@ db-shifter \
 |------------------|----------------------------------------|
 | `--dry-run`       | Simulate the transfer, no data is hurt |
 | `--verbose`       | Prints detailed logs of every row      |
-| `--table users`   | Sync just one table (you control freak) |
+| `--table users`   | Sync just one table |
 | `--skip-fk`       | Ignores foreign key errors             |
 
 ---
@@ -103,8 +101,7 @@ db-shifter \
 ## 🪦 Contributing
 
 Found a bug? Good.  
-Fix it, submit a PR, and drop your cashapp in the description. If it works, I might bless you.  
-Or roast you. Who knows.
+Fix it, submit a PR, and don't drop your cashapp in the description.
 
 ---
 
