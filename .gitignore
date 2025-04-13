@@ -37,3 +37,9 @@ bower_components/
 *.bak
 *.orig
 *.rej
+
+__pycache__/
+*.pyc
+dist/
+build/
+db_shifter.egg-info/

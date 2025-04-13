@@ -12,7 +12,7 @@
 
 Yeah. We’ve all been there.
 
-Welcome to **`db-shifter`** — the savage little script that digs through your old PostgreSQL database and copies only the missing rows into your new one.
+Welcome to **`db-shifter`** — the little script that digs through your old PostgreSQL database and copies only the missing rows into your new one.
 
 No overwrites. No dumbass `pg_dump`. Just cold, calculated migration for the chaotic neutral in you.
 
