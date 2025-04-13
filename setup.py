@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="db-shifter",
-    version="0.1.0",
+    version="0.1.3",
     packages=find_packages(),
     install_requires=[
         "psycopg2-binary",
@@ -12,8 +12,8 @@ setup(
             "db-shifter=db_shifter.__main__:main"
         ]
     },
-    author="Your Real Name or Alias",
-    author_email="you@example.com",
+    author="superman",
+    author_email="goodnesskolapo@gmail.com",
     description="A toxic lil' tool to sync missing rows between two Postgres DBs.",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
