@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="db-shifter",
-    version="0.1.4",
+    version="0.1.5",
     packages=find_packages(),
     install_requires=[
         "psycopg2-binary",
@@ -18,6 +18,11 @@ setup(
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
     url="https://github.com/goodness5/db-shifter",
+    project_urls={
+        "Changelog": "https://github.com/goodness5/db-shifter/blob/master/CHANGELOG.md",
+        "Source": "https://github.com/goodness5/db-shifter",
+        "Tracker": "https://github.com/goodness5/db-shifter/issues",
+    },
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",

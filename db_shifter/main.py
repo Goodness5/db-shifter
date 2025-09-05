@@ -1,5 +1,6 @@
 import psycopg2
-from psycopg2.extras import RealDictCursor
+from psycopg2.extras import RealDictCursor, Json
+from importlib.metadata import version as _pkg_version, PackageNotFoundError as _PkgNotFound
 import sys
 import argparse
 from collections import defaultdict
@@ -12,6 +13,13 @@ parser.add_argument("--dry-run", action="store_true", help="Don't insert, just s
 parser.add_argument("--verbose", action="store_true", help="Print all operations in detail")
 parser.add_argument("--table", help="Sync just one table")
 parser.add_argument("--skip-fk", action="store_true", help="Ignore foreign key errors")
+# Version flag
+def _resolve_version():
+    try:
+        return _pkg_version("db-shifter")
+    except _PkgNotFound:
+        return "unknown"
+parser.add_argument("--version", action="version", version=f"%(prog)s {_resolve_version()}")
 args = parser.parse_args()
 
 # === A log of all table activities to generate final summary === #
@@ -99,7 +107,13 @@ def push_rows_to_new(conn, table_name, rows, pk, dry_run=False, verbose=False):
                 print(f"  🧬 {row}")
             if dry_run:
                 continue
-            vals = [row[k] for k in keys]
+            # Adapt Python dict/list values (e.g., JSON/JSONB columns) for psycopg2
+            def _adapt_value(value):
+                if isinstance(value, (dict, list)):
+                    return Json(value)
+                return value
+
+            vals = [_adapt_value(row[k]) for k in keys]
             placeholders = ','.join(['%s'] * len(vals))
             columns = ','.join([quote_ident(k) for k in keys])
             try:
