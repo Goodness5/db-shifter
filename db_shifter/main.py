@@ -162,6 +162,11 @@ def sync_em_all(conn_old, conn_new):
             print(f"✅ Done with {table}")
         except Exception as e:
             print(f"❌ Error syncing {table}: {str(e)}")
+            # Rollback the failed transaction to prevent "aborted transaction" errors
+            try:
+                conn_new.rollback()
+            except Exception:
+                pass  # Ignore rollback errors
 
     # === FINAL TOXIC REPORT === #
     print("\n📦 Final Sync Report:")
