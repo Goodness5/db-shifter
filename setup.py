@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="db-shifter",
-    version="0.1.5",
+    version="0.1.7",
     packages=find_packages(),
     install_requires=[
         "psycopg2-binary",

@@ -81,17 +81,79 @@ def pull_existing_ids(conn, table_name, pk):
             return set()
 
 
-def pull_missing_rows(conn, table_name, pk, existing_ids):
+def get_table_columns(conn, table_name):
+    """Get column names, types, and constraints for a table."""
+    with conn.cursor() as cur:
+        cur.execute(f"""
+            SELECT 
+                column_name, 
+                data_type,
+                is_nullable,
+                column_default
+            FROM information_schema.columns 
+            WHERE table_name = %s AND table_schema = 'public'
+            ORDER BY ordinal_position
+        """, (table_name,))
+        return {
+            row[0]: {
+                'type': row[1], 
+                'nullable': row[2] == 'YES',
+                'default': row[3]
+            } 
+            for row in cur.fetchall()
+        }
+
+
+def get_common_columns(source_conn, dest_conn, table_name):
+    """Get columns that exist in both source and destination tables."""
+    source_cols = get_table_columns(source_conn, table_name)
+    dest_cols = get_table_columns(dest_conn, table_name)
+    
+    common_cols = set(source_cols.keys()) & set(dest_cols.keys())
+    missing_in_dest = set(source_cols.keys()) - set(dest_cols.keys())
+    missing_in_source = set(dest_cols.keys()) - set(source_cols.keys())
+    
+    if missing_in_dest:
+        print(f"  📋 Columns in source but not destination: {sorted(missing_in_dest)}")
+    if missing_in_source:
+        print(f"  📋 Columns in destination but not source: {sorted(missing_in_source)}")
+    
+    # Check for NOT NULL constraints that might cause issues
+    not_null_issues = []
+    for col in common_cols:
+        if not dest_cols[col]['nullable'] and col not in source_cols:
+            not_null_issues.append(col)
+    
+    if not_null_issues:
+        print(f"  ⚠️  NOT NULL columns missing from source: {not_null_issues}")
+    
+    return sorted(common_cols), missing_in_dest, missing_in_source, dest_cols
+
+
+def pull_missing_rows(conn, table_name, pk, existing_ids, columns=None):
     """Get rows from old DB that are NOT present in new DB."""
     with conn.cursor(cursor_factory=RealDictCursor) as cur:
-        if not existing_ids:
-            cur.execute(f"SELECT * FROM {quote_table(table_name)}")
+        if columns:
+            # Only select common columns
+            column_list = ','.join([quote_ident(col) for col in columns])
+            if not existing_ids:
+                cur.execute(f"SELECT {column_list} FROM {quote_table(table_name)}")
+            else:
+                ids_tuple = tuple(existing_ids)
+                cur.execute(
+                    f"SELECT {column_list} FROM {quote_table(table_name)} WHERE {quote_ident(pk)} NOT IN %s", 
+                    (ids_tuple,)
+                )
         else:
-            ids_tuple = tuple(existing_ids)
-            cur.execute(
-                f"SELECT * FROM {quote_table(table_name)} WHERE {quote_ident(pk)} NOT IN %s", 
-                (ids_tuple,)
-            )
+            # Original behavior - select all columns
+            if not existing_ids:
+                cur.execute(f"SELECT * FROM {quote_table(table_name)}")
+            else:
+                ids_tuple = tuple(existing_ids)
+                cur.execute(
+                    f"SELECT * FROM {quote_table(table_name)} WHERE {quote_ident(pk)} NOT IN %s", 
+                    (ids_tuple,)
+                )
         return cur.fetchall()
 
 
@@ -149,7 +211,35 @@ def sync_em_all(conn_old, conn_new):
         existing_new_ids = pull_existing_ids(conn_new, table, pk)
         existing_new = len(existing_new_ids)
 
-        rows = pull_missing_rows(conn_old, table, pk, existing_new_ids)
+        # Detect schema differences and get common columns
+        print(f"🔍 Analyzing schema for {table}...")
+        common_cols, missing_in_dest, missing_in_source, dest_cols = get_common_columns(conn_old, conn_new, table)
+        
+        if not common_cols:
+            print(f"⚠️  No common columns found between source and destination for {table}")
+            continue
+            
+        if pk not in common_cols:
+            print(f"⚠️  Primary key '{pk}' not found in common columns for {table}")
+            continue
+
+        rows = pull_missing_rows(conn_old, table, pk, existing_new_ids, common_cols)
+        
+        # Add default values for NOT NULL columns that are missing from source
+        if rows:
+            for row in rows:
+                for col_name, col_info in dest_cols.items():
+                    if col_name in common_cols and not col_info['nullable'] and col_name not in row:
+                        # Provide smart defaults based on column type
+                        if 'varchar' in col_info['type'] or 'text' in col_info['type']:
+                            row[col_name] = f"migrated_{col_name}"
+                        elif 'int' in col_info['type'] or 'numeric' in col_info['type']:
+                            row[col_name] = 0
+                        elif 'bool' in col_info['type']:
+                            row[col_name] = False
+                        else:
+                            row[col_name] = col_info['default'] if col_info['default'] else f"migrated_{col_name}"
+                        print(f"  🔧 Added default value for {col_name}: {row[col_name]}")
 
         sync_log[table]["existing_old"] = existing_old
         sync_log[table]["existing_new"] = existing_new
@@ -165,8 +255,17 @@ def sync_em_all(conn_old, conn_new):
             # Rollback the failed transaction to prevent "aborted transaction" errors
             try:
                 conn_new.rollback()
-            except Exception:
-                pass  # Ignore rollback errors
+                print(f"🔄 Rolled back transaction for {table}")
+            except Exception as rollback_error:
+                print(f"⚠️  Rollback failed for {table}: {rollback_error}")
+                # If rollback fails, we need to start a new connection
+                try:
+                    conn_new.close()
+                    conn_new = psycopg2.connect(args.new_db_url)
+                    print(f"🔄 Created new connection after rollback failure")
+                except Exception as reconnect_error:
+                    print(f"💥 Failed to reconnect: {reconnect_error}")
+                    break
 
     # === FINAL TOXIC REPORT === #
     print("\n📦 Final Sync Report:")
