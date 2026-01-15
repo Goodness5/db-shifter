@@ -1,4 +1,4 @@
-# 🧠 **db-shifter**  
+# **db-shifter**  
 
 **_Because someone switched your f**king DB URL again._**
 
@@ -31,8 +31,11 @@ Because you need to **copy missing shit table-by-table** and you’re too pretty
 - ✅ Auto-detects all tables in `public` schema  
 - ✅ Finds primary keys like a bloodhound  
 - ✅ Copies only rows **missing** in the new DB  
-- ✅ Skips duplicates (doesn’t ruin your existing data)  
-- ✅ FK errors? Nah — this ain’t your grandma’s `pg_dump`
+- ✅ Skips duplicates (doesn't ruin your existing data)  
+- ✅ **Column-based sync** — specify exactly which columns to sync
+- ✅ **Circular FK handling** — automatically detects and handles circular foreign key dependencies
+- ✅ Smart sync order optimization based on FK relationships
+- ✅ FK errors? Nah — this ain't your grandma's `pg_dump`
 
 ---
 
@@ -54,9 +57,38 @@ pip install -e .
 
 ## 🚀 Usage
 
+### Basic Usage
 ```bash
-db-shifter --old-db-url postgresql://user:pass@oldhost/db   --new-db-url postgresql://user:pass@newhost/db
+db-shifter --old-db-url postgresql://user:pass@oldhost/db --new-db-url postgresql://user:pass@newhost/db
 ```
+
+### Column-based Sync
+Sync only specific columns (useful when schemas differ):
+```bash
+db-shifter --old-db-url postgresql://user:pass@oldhost/db \
+           --new-db-url postgresql://user:pass@newhost/db \
+           --columns id,name,email,created_at
+```
+
+### Single Table Sync
+```bash
+db-shifter --old-db-url postgresql://user:pass@oldhost/db \
+           --new-db-url postgresql://user:pass@newhost/db \
+           --table users
+```
+
+### Deep Check Mode
+Compare and update column values for existing rows (not just insert missing rows):
+```bash
+db-shifter --old-db-url postgresql://user:pass@oldhost/db \
+           --new-db-url postgresql://user:pass@newhost/db \
+           --deep-check
+```
+
+This will:
+- Insert missing rows (as usual)
+- Compare column values for rows that exist in both databases
+- Update rows where column values differ
 
 ---
 
@@ -68,6 +100,8 @@ db-shifter --old-db-url postgresql://user:pass@oldhost/db   --new-db-url postgre
 | `--verbose`       | Prints detailed logs of every row      |
 | `--table users`   | Sync just one table |
 | `--skip-fk`       | Ignores foreign key errors             |
+| `--columns id,name,email` | Sync only specified columns (comma-separated). Primary key is always included. |
+| `--deep-check`    | Deep check: compare column values for existing rows and update differences |
 
 ---
 
@@ -83,16 +117,33 @@ db-shifter --old-db-url postgresql://user:pass@oldhost/db   --new-db-url postgre
 
 ## ⚠️ Caution
 
-- Assumes **you have primary keys** (don’t be a barbarian)  
-- Does **NOT** handle circular FK hell — yet  
-- If you’re syncing 50GB of trash, don’t cry when it lags  
-- Backups are your friend. Don’t be a dumbass.
+- Assumes **you have primary keys** (don't be a barbarian)  
+- Circular FK dependencies are now detected and handled, but you may need to manually re-add FK constraints after sync
+- If you're syncing 50GB of trash, don't cry when it lags  
+- Backups are your friend. Don't be a dumbass.
+
+---
+
+## 🔄 Circular Foreign Key Handling
+
+When `db-shifter` detects circular foreign key dependencies (e.g., Table A → Table B → Table A), it will:
+
+1. **Detect the cycle** and warn you about it
+2. **Temporarily disable FK constraints** for tables in the cycle during sync
+3. **Sync all data** without FK constraint violations
+4. **Note**: You may need to manually re-add FK constraints after sync completes
+
+Example output:
+```
+⚠️  Circular foreign key dependencies detected:
+   Cycle 1: users → profiles → users
+   🔄 Will sync these tables in multiple passes with FK constraint handling
+```
 
 ---
 
 ## ✨ Coming Soon
 
-- Auto topological sorting to avoid FK explosions  
 - Timestamp-based syncing (`created_at` support)  
 - GUI with a "FIX EVERYTHING" button (for product managers lol)
 
