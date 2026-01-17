@@ -1,41 +1,41 @@
 # **db-shifter**  
 
-**_Because someone switched your f**king DB URL again._**
+**_Because someone switched your DB URL again._**
 
 ---
 
 ### 👶 Did your intern point production to the wrong DB?  
 
-### 🤡 Did your devops guy swear "nothing changed" before disappearing?  
+### 🤡 Did your devops team swear "nothing changed" before disappearing?  
 
-### 🔥 Did your CTO say “just restore from backup” like you weren’t already crying?  
+### 🔥 Did your CTO say "just restore from backup" like you weren't already stressed?  
 
-Yeah. We’ve all been there.
+Yeah. We've all been there.
 
-Welcome to **`db-shifter`** — the little script that digs through your old PostgreSQL database and copies only the missing rows into your new one.
+Welcome to **`db-shifter`** — a smart tool that intelligently migrates data from your old PostgreSQL database to your new one, copying only the missing rows.
 
-No overwrites. No dumbass `pg_dump`. Just cold, calculated migration for the chaotic neutral in you.
+No overwrites. No full `pg_dump` restores. Just precise, calculated migration that preserves your existing data.
 
 ---
 
 ## ⚡ Why?
 
-Because your CTO is a clown.  
-Because your devops team “accidentally” pointed production at the wrong motherf**king database.  
-Because you need to **copy missing shit table-by-table** and you’re too pretty to do it manually.
+When database connections get misconfigured or you need to migrate specific data between environments, manual table-by-table copying is tedious and error-prone.  
+`db-shifter` automates the process of **copying missing data table-by-table** while respecting your existing records and foreign key relationships.
 
 ---
 
 ## 🧰 Features
 
 - ✅ Auto-detects all tables in `public` schema  
-- ✅ Finds primary keys like a bloodhound  
+- ✅ Automatically finds primary keys  
 - ✅ Copies only rows **missing** in the new DB  
-- ✅ Skips duplicates (doesn't ruin your existing data)  
+- ✅ Skips duplicates (preserves your existing data)  
+
 - ✅ **Column-based sync** — specify exactly which columns to sync
 - ✅ **Circular FK handling** — automatically detects and handles circular foreign key dependencies
 - ✅ Smart sync order optimization based on FK relationships
-- ✅ FK errors? Nah — this ain't your grandma's `pg_dump`
+- ✅ Handles foreign key constraints intelligently — no more FK violation errors
 
 ---
 
@@ -45,7 +45,7 @@ Because you need to **copy missing shit table-by-table** and you’re too pretty
 pip install db-shifter
 ```
 
-Or if you're a real one:
+Or install from source:
 
 ```bash
 git clone https://github.com/goodness5/db-shifter.git
@@ -57,12 +57,14 @@ pip install -e .
 
 ## 🚀 Usage
 
-### Basic Usage
+### Sync Mode (Default)
+
+#### Basic Sync
 ```bash
 db-shifter --old-db-url postgresql://user:pass@oldhost/db --new-db-url postgresql://user:pass@newhost/db
 ```
 
-### Column-based Sync
+#### Column-based Sync
 Sync only specific columns (useful when schemas differ):
 ```bash
 db-shifter --old-db-url postgresql://user:pass@oldhost/db \
@@ -70,14 +72,14 @@ db-shifter --old-db-url postgresql://user:pass@oldhost/db \
            --columns id,name,email,created_at
 ```
 
-### Single Table Sync
+#### Single Table Sync
 ```bash
 db-shifter --old-db-url postgresql://user:pass@oldhost/db \
            --new-db-url postgresql://user:pass@newhost/db \
            --table users
 ```
 
-### Deep Check Mode
+#### Deep Check Mode
 Compare and update column values for existing rows (not just insert missing rows):
 ```bash
 db-shifter --old-db-url postgresql://user:pass@oldhost/db \
@@ -89,6 +91,53 @@ This will:
 - Insert missing rows (as usual)
 - Compare column values for rows that exist in both databases
 - Update rows where column values differ
+
+### Insert Mode (New!)
+
+Insert records directly into a database table. Perfect for adding people, records, or any data.
+
+#### Insert from JSON String
+```bash
+db-shifter --db-url postgresql://user:pass@host/db \
+           --table users \
+           --data '{"name":"John Doe","email":"john@example.com","age":30}'
+```
+
+#### Insert Multiple Records from JSON
+```bash
+db-shifter --db-url postgresql://user:pass@host/db \
+           --table users \
+           --data '[{"name":"John","email":"john@example.com"},{"name":"Jane","email":"jane@example.com"}]'
+```
+
+#### Insert from JSON File
+```bash
+db-shifter --db-url postgresql://user:pass@host/db \
+           --table users \
+           --file data.json
+```
+
+#### Insert from CSV File
+```bash
+db-shifter --db-url postgresql://user:pass@host/db \
+           --table users \
+           --file data.csv
+```
+
+#### Handle Conflicts Gracefully
+```bash
+# Ignore conflicts (skip duplicate records)
+db-shifter --db-url postgresql://user:pass@host/db \
+           --table users \
+           --file data.json \
+           --on-conflict ignore
+
+# Update on conflict (upsert)
+db-shifter --db-url postgresql://user:pass@host/db \
+           --table users \
+           --file data.json \
+           --on-conflict update
+```
 
 ---
 
@@ -103,24 +152,37 @@ This will:
 | `--columns id,name,email` | Sync only specified columns (comma-separated). Primary key is always included. |
 | `--deep-check`    | Deep check: compare column values for existing rows and update differences |
 
+### Insert Mode Options
+
+| Flag              | What it does                          |
+|------------------|----------------------------------------|
+| `--db-url`       | Database connection string (required) |
+| `--table`        | Table name to insert into (required) |
+| `--data`         | JSON data (object or array) or path to JSON/CSV file |
+| `--file`         | Path to JSON or CSV file |
+| `--dry-run`      | Simulate the insert, no data is changed |
+| `--verbose`       | Print detailed logs of every record |
+| `--skip-fk`       | Ignore foreign key errors |
+| `--on-conflict`   | What to do on primary key conflict: `ignore`, `update`, or `error` (default) |
+
 ---
 
 ## 🧠 How It Works
 
-1. Connects to both DBs  
+1. Connects to both databases  
 2. Lists all public tables  
-3. Checks the primary key (like a snitch)  
-4. Pulls rows missing from the new DB  
-5. Inserts them without wrecking existing rows
+3. Identifies primary keys for each table  
+4. Pulls rows missing from the new database  
+5. Inserts them without overwriting existing rows
 
 ---
 
 ## ⚠️ Caution
 
-- Assumes **you have primary keys** (don't be a barbarian)  
+- Requires **primary keys** on tables you want to sync  
 - Circular FK dependencies are now detected and handled, but you may need to manually re-add FK constraints after sync
-- If you're syncing 50GB of trash, don't cry when it lags  
-- Backups are your friend. Don't be a dumbass.
+- Large databases may take time to sync — be patient  
+- **Always backup your databases before syncing** — safety first!
 
 ---
 
@@ -145,14 +207,14 @@ Example output:
 ## ✨ Coming Soon
 
 - Timestamp-based syncing (`created_at` support)  
-- GUI with a "FIX EVERYTHING" button (for product managers lol)
+- GUI interface for easier data management
 
 ---
 
 ## 🪦 Contributing
 
-Found a bug? Good.  
-Fix it, submit a PR, and don't drop your cashapp in the description.
+Found a bug? Great!  
+Fix it, submit a PR, and help make `db-shifter` better for everyone.
 
 ---
 

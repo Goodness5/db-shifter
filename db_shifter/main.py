@@ -5,6 +5,9 @@ import sys
 import argparse
 from collections import defaultdict
 import os
+import json
+import csv
+from typing import List, Dict, Any, Optional
 
 # ANSI color codes for beautiful CLI output
 class Colors:
@@ -50,23 +53,44 @@ def colorize(text, color):
     return text
 
 # ===================== CLI OPTIONS ===================== #
-parser = argparse.ArgumentParser(description="Move missing rows from old Postgres DB to new one.")
-parser.add_argument("--old-db-url", required=True, help="Old DB connection string")
-parser.add_argument("--new-db-url", required=True, help="New DB connection string")
-parser.add_argument("--dry-run", action="store_true", help="Don't insert, just show what would happen")
-parser.add_argument("--verbose", action="store_true", help="Print all operations in detail")
-parser.add_argument("--table", help="Sync just one table")
-parser.add_argument("--skip-fk", action="store_true", help="Ignore foreign key errors")
-parser.add_argument("--columns", help="Comma-separated list of columns to sync (e.g., 'id,name,email'). If not specified, all common columns are synced.")
-parser.add_argument("--deep-check", action="store_true", help="Deep check: compare column values for existing rows and update differences")
-# Version flag
 def _resolve_version():
     try:
         return _pkg_version("db-shifter")
     except _PkgNotFound:
         return "unknown"
-parser.add_argument("--version", action="version", version=f"%(prog)s {_resolve_version()}")
-args = parser.parse_args()
+
+# Check if this looks like an insert command (has --db-url and --table but no --old-db-url)
+is_insert_mode = '--db-url' in sys.argv and '--table' in sys.argv and '--old-db-url' not in sys.argv
+
+if is_insert_mode:
+    # Insert mode
+    parser = argparse.ArgumentParser(description="Insert records into a PostgreSQL database table.")
+    parser.add_argument("--db-url", required=True, help="Database connection string")
+    parser.add_argument("--table", required=True, help="Table name to insert into")
+    parser.add_argument("--data", help="JSON data (single object or array of objects)")
+    parser.add_argument("--file", help="Path to JSON or CSV file containing records")
+    parser.add_argument("--dry-run", action="store_true", help="Don't insert, just show what would happen")
+    parser.add_argument("--verbose", action="store_true", help="Print all operations in detail")
+    parser.add_argument("--skip-fk", action="store_true", help="Ignore foreign key errors")
+    parser.add_argument("--on-conflict", choices=['ignore', 'update', 'error'], default='error', 
+                      help="What to do on primary key conflict: ignore, update, or error (default)")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_resolve_version()}")
+    args = parser.parse_args()
+    args.command = 'insert'
+else:
+    # Sync mode (default/backward compatible)
+    parser = argparse.ArgumentParser(description="Move missing rows from old Postgres DB to new one.")
+    parser.add_argument("--old-db-url", required=True, help="Old DB connection string")
+    parser.add_argument("--new-db-url", required=True, help="New DB connection string")
+    parser.add_argument("--dry-run", action="store_true", help="Don't insert, just show what would happen")
+    parser.add_argument("--verbose", action="store_true", help="Print all operations in detail")
+    parser.add_argument("--table", help="Sync just one table")
+    parser.add_argument("--skip-fk", action="store_true", help="Ignore foreign key errors")
+    parser.add_argument("--columns", help="Comma-separated list of columns to sync (e.g., 'id,name,email'). If not specified, all common columns are synced.")
+    parser.add_argument("--deep-check", action="store_true", help="Deep check: compare column values for existing rows and update differences")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {_resolve_version()}")
+    args = parser.parse_args()
+    args.command = 'sync'
 
 # === A log of all table activities to generate final summary === #
 sync_log = defaultdict(lambda: {"existing_new": 0, "existing_old": 0, "inserted": 0, "updated": 0, "inserted_pks": [], "updated_pks": []})
@@ -738,13 +762,272 @@ def sync_em_all(conn_old, conn_new):
             print(f"   {colorize('PKs Updated:', Colors.MAGENTA)} {stats['updated_pks']}")
 
 
+# ===================== INSERT FUNCTIONALITY ===================== #
+
+def parse_data_input(data_input: Optional[str] = None, file_path: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Parse data from JSON string, JSON file, or CSV file."""
+    records = []
+    
+    if file_path:
+        # Read from file
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File not found: {file_path}")
+        
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        if file_ext == '.json':
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    records = [data]
+                elif isinstance(data, list):
+                    records = data
+                else:
+                    raise ValueError("JSON file must contain an object or array of objects")
+        elif file_ext == '.csv':
+            with open(file_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                records = list(reader)
+        else:
+            raise ValueError(f"Unsupported file format: {file_ext}. Use .json or .csv")
+    elif data_input:
+        # Check if data_input is a file path
+        if os.path.exists(data_input):
+            # It's a file path, read it
+            file_ext = os.path.splitext(data_input)[1].lower()
+            if file_ext == '.json':
+                with open(data_input, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        records = [data]
+                    elif isinstance(data, list):
+                        records = data
+                    else:
+                        raise ValueError("JSON file must contain an object or array of objects")
+            elif file_ext == '.csv':
+                with open(data_input, 'r', encoding='utf-8') as f:
+                    reader = csv.DictReader(f)
+                    records = list(reader)
+            else:
+                raise ValueError(f"Unsupported file format: {file_ext}. Use .json or .csv")
+        else:
+            # Parse as JSON string
+            try:
+                data = json.loads(data_input)
+                if isinstance(data, dict):
+                    records = [data]
+                elif isinstance(data, list):
+                    records = data
+                else:
+                    raise ValueError("JSON data must be an object or array of objects")
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON: {e}")
+    else:
+        raise ValueError("Either --data or --file must be provided")
+    
+    if not records:
+        raise ValueError("No records found in input")
+    
+    return records
+
+
+def validate_record_against_schema(conn, table_name: str, record: Dict[str, Any], columns: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate and prepare a record for insertion."""
+    validated = {}
+    
+    for col_name, col_info in columns.items():
+        if col_name in record:
+            value = record[col_name]
+            # Convert empty strings to None for nullable columns
+            if value == '' and col_info['nullable']:
+                value = None
+            validated[col_name] = value
+        elif not col_info['nullable'] and col_info['default'] is None:
+            # Required column without default
+            raise ValueError(f"Required column '{col_name}' is missing and has no default value")
+        # If column has default, we can skip it (PostgreSQL will use default)
+    
+    return validated
+
+
+def insert_records(conn, table_name: str, records: List[Dict[str, Any]], 
+                   dry_run: bool = False, verbose: bool = False, 
+                   on_conflict: str = 'error', skip_fk: bool = False):
+    """Insert records into a table gracefully."""
+    if not records:
+        print(f"{colorize('No records to insert', Colors.YELLOW)}")
+        return
+    
+    # Get table schema
+    columns = get_table_columns(conn, table_name)
+    pk = sniff_primary_key(conn, table_name)
+    
+    if not columns:
+        raise ValueError(f"Table '{table_name}' not found or has no columns")
+    
+    print(f"{colorize('Inserting', Colors.BLUE)} {colorize(len(records), Colors.BOLD)} {colorize('record(s) into table:', Colors.BLUE)} {colorize(table_name, Colors.CYAN)}")
+    
+    validated_records = []
+    errors = []
+    
+    # Validate all records first
+    for i, record in enumerate(records, 1):
+        try:
+            validated = validate_record_against_schema(conn, table_name, record, columns)
+            validated_records.append(validated)
+            if verbose:
+                print(f"  {colorize(f'Record {i}:', Colors.CYAN)} {validated}")
+        except Exception as e:
+            error_msg = f"Record {i} validation failed: {e}"
+            errors.append(error_msg)
+            if verbose:
+                print(f"  {colorize('ERROR:', Colors.RED)} {error_msg}")
+            if not skip_fk:
+                raise ValueError(error_msg)
+    
+    if errors and skip_fk:
+        print(f"  {colorize(f'Skipped {len(errors)} invalid record(s)', Colors.YELLOW)}")
+    
+    if not validated_records:
+        print(f"{colorize('No valid records to insert', Colors.YELLOW)}")
+        return
+    
+    # Insert records
+    inserted_count = 0
+    updated_count = 0
+    skipped_count = 0
+    
+    with conn.cursor() as cur:
+        for i, record in enumerate(validated_records, 1):
+            if dry_run:
+                print(f"  {colorize(f'[DRY RUN] Would insert record {i}:', Colors.YELLOW)} {record}")
+                continue
+            
+            # Adapt Python dict/list values (e.g., JSON/JSONB columns) for psycopg2
+            def _adapt_value(value):
+                if isinstance(value, (dict, list)):
+                    return Json(value)
+                return value
+            
+            # Build INSERT statement
+            keys = list(record.keys())
+            vals = [_adapt_value(record[k]) for k in keys]
+            placeholders = ','.join(['%s'] * len(vals))
+            columns_str = ','.join([quote_ident(k) for k in keys])
+            
+            try:
+                if on_conflict == 'ignore':
+                    # Use ON CONFLICT DO NOTHING
+                    sql = f"INSERT INTO {quote_table(table_name)} ({columns_str}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+                    cur.execute(sql, vals)
+                    if cur.rowcount > 0:
+                        inserted_count += 1
+                        if verbose:
+                            print(f"  {colorize(f'Inserted record {i}:', Colors.GREEN)} {record}")
+                    else:
+                        skipped_count += 1
+                        if verbose:
+                            print(f"  {colorize(f'Skipped record {i} (conflict):', Colors.YELLOW)} {record}")
+                elif on_conflict == 'update' and pk:
+                    # Use ON CONFLICT DO UPDATE
+                    update_cols = [k for k in keys if k != pk]
+                    if update_cols:
+                        update_clause = ', '.join([f"{quote_ident(k)} = EXCLUDED.{quote_ident(k)}" for k in update_cols])
+                        sql = f"INSERT INTO {quote_table(table_name)} ({columns_str}) VALUES ({placeholders}) ON CONFLICT ({quote_ident(pk)}) DO UPDATE SET {update_clause}"
+                        cur.execute(sql, vals)
+                        if cur.rowcount > 0:
+                            if record.get(pk) in [r.get(pk) for r in validated_records[:i-1]]:
+                                updated_count += 1
+                                if verbose:
+                                    print(f"  {colorize(f'Updated record {i}:', Colors.MAGENTA)} {record}")
+                            else:
+                                inserted_count += 1
+                                if verbose:
+                                    print(f"  {colorize(f'Inserted record {i}:', Colors.GREEN)} {record}")
+                    else:
+                        # No columns to update, just ignore
+                        sql = f"INSERT INTO {quote_table(table_name)} ({columns_str}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+                        cur.execute(sql, vals)
+                        if cur.rowcount > 0:
+                            inserted_count += 1
+                else:
+                    # Default: error on conflict
+                    sql = f"INSERT INTO {quote_table(table_name)} ({columns_str}) VALUES ({placeholders})"
+                    cur.execute(sql, vals)
+                    inserted_count += 1
+                    if verbose:
+                        print(f"  {colorize(f'Inserted record {i}:', Colors.GREEN)} {record}")
+                        
+            except psycopg2.IntegrityError as e:
+                if skip_fk:
+                    print(f"  {colorize(f'WARNING: Skipped record {i} due to constraint error:', Colors.YELLOW)} {e}")
+                    skipped_count += 1
+                else:
+                    raise e
+            except Exception as e:
+                if skip_fk:
+                    print(f"  {colorize(f'WARNING: Skipped record {i} due to error:', Colors.YELLOW)} {e}")
+                    skipped_count += 1
+                else:
+                    raise e
+    
+    if not dry_run:
+        conn.commit()
+    
+    # Summary
+    print(f"\n{colorize('Insert Summary:', Colors.BOLD + Colors.CYAN)}")
+    if not dry_run:
+        print(f"  {colorize('Inserted:', Colors.GREEN)} {colorize(inserted_count, Colors.BOLD)}")
+        if updated_count > 0:
+            print(f"  {colorize('Updated:', Colors.MAGENTA)} {colorize(updated_count, Colors.BOLD)}")
+        if skipped_count > 0:
+            print(f"  {colorize('Skipped:', Colors.YELLOW)} {colorize(skipped_count, Colors.BOLD)}")
+    else:
+        print(f"  {colorize('[DRY RUN] Would insert:', Colors.YELLOW)} {colorize(len(validated_records), Colors.BOLD)} {colorize('record(s)', Colors.YELLOW)}")
+
+
+def insert_em_all():
+    """Main function for insert command."""
+    try:
+        # Parse data
+        records = parse_data_input(args.data, args.file)
+        
+        # Connect to database
+        conn = psycopg2.connect(args.db_url)
+        
+        try:
+            insert_records(
+                conn, 
+                args.table, 
+                records,
+                dry_run=args.dry_run,
+                verbose=args.verbose,
+                on_conflict=args.on_conflict,
+                skip_fk=args.skip_fk
+            )
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        print(f"{colorize('ERROR:', Colors.RED + Colors.BOLD)} {colorize(str(e), Colors.RED)}")
+        sys.exit(1)
+
+
 # ===================== MAIN ===================== #
 def main():
-    conn_old = psycopg2.connect(args.old_db_url)
-    conn_new = psycopg2.connect(args.new_db_url)
+    if args.command == 'sync':
+        conn_old = psycopg2.connect(args.old_db_url)
+        conn_new = psycopg2.connect(args.new_db_url)
 
-    try:
-        sync_em_all(conn_old, conn_new)
-    finally:
-        conn_old.close()
-        conn_new.close()
+        try:
+            sync_em_all(conn_old, conn_new)
+        finally:
+            conn_old.close()
+            conn_new.close()
+    
+    elif args.command == 'insert':
+        insert_em_all()
+    
+    else:
+        print(f"{colorize('ERROR:', Colors.RED + Colors.BOLD)} Unknown command")
+        sys.exit(1)
