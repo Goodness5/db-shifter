@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## 0.2.0 - 2025-01-31
+## 0.1.8 - 2026-01-18
 
 ### Added
 - **Column-based sync**: New `--columns` flag allows you to specify which columns to sync (e.g., `--columns id,name,email`). Primary key is always included automatically.
